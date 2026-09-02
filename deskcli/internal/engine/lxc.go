@@ -143,3 +143,80 @@ func (l *LxcEngine) GetIP(name string) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
+
+// ─── New image / stats methods ────────────────────────────────────────────────
+
+func (l *LxcEngine) ListImages() ([]ImageInfo, error) {
+	if !l.isLxd {
+		return nil, fmt.Errorf("list images not supported for native LXC")
+	}
+	out, err := exec.Command("lxc", "image", "list", "--format", "csv", "-c", "flsd").Output()
+	if err != nil {
+		return nil, err
+	}
+	var list []ImageInfo
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ",", 4)
+		img := ImageInfo{}
+		if len(parts) > 0 {
+			img.Tags = []string{parts[0]}
+		}
+		if len(parts) > 1 {
+			img.ID = parts[1]
+		}
+		if len(parts) > 2 {
+			img.Size = parts[2]
+		}
+		if len(parts) > 3 {
+			img.Created = parts[3]
+		}
+		list = append(list, img)
+	}
+	return list, nil
+}
+
+func (l *LxcEngine) RemoveImage(id string) error {
+	if !l.isLxd {
+		return fmt.Errorf("remove image not supported for native LXC")
+	}
+	return exec.Command("lxc", "image", "delete", id).Run()
+}
+
+func (l *LxcEngine) GetStats() (*EngineStats, error) {
+	stats := &EngineStats{EngineVersion: l.Version()}
+	containers, err := l.List()
+	if err != nil {
+		return stats, nil
+	}
+	stats.ContainersTotal = len(containers)
+	for _, c := range containers {
+		lower := strings.ToLower(c.Status)
+		if lower == "running" || lower == "started" {
+			stats.ContainersRunning++
+		}
+	}
+	if l.isLxd {
+		imgs, err := l.ListImages()
+		if err == nil {
+			stats.ImagesTotal = len(imgs)
+		}
+	}
+	return stats, nil
+}
+
+func (l *LxcEngine) Version() string {
+	binary := "lxc-ls"
+	args := []string{"--version"}
+	if l.isLxd {
+		binary = "lxc"
+		args = []string{"version"}
+	}
+	out, err := exec.Command(binary, args...).Output()
+	if err != nil {
+		return "lxc (unavailable)"
+	}
+	return strings.TrimSpace(string(out))
+}

@@ -4,9 +4,17 @@ After=network.target docker.service
 
 [Service]
 Type=simple
+User=deskcli
+Group=deskcli
 ExecStart=/usr/local/bin/deskcli serve
 Restart=on-failure
 RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/deskcli
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 source scripts/manager/config.sh
 source scripts/creator/Select-Systems.sh
 source scripts/creator/Select-Desktop.sh
@@ -11,26 +12,25 @@ sudo mkdir -p "${DATAPATH}${PV_DATA}/root"
 echo -n "   Docker: "
 sudo docker run -itd  \
 $GPU_LIST             \
---privileged=true     \
---cpus=$CPUSSIZE      \
---memory=${MEMSSIZE}m \
+--cpus="$CPUSSIZE"      \
+--memory="${MEMSSIZE}m" \
 --shm-size=1024m      \
---name $D_NAMES       \
---cap-add SYS_ADMIN   \
---cap-add=SYS_PTRACE  \
--h $D_NAMES.$HOSTNAME \
+--name "$D_NAMES"       \
+--cap-drop ALL        \
+--security-opt no-new-privileges:true \
+-h "$D_NAMES.$HOSTNAME" \
    $PORTMAP      \
--p $PM_SSHS:22   \
--p $PM_NXSR:4000 \
--p $PM_VNCS:5900 \
--p $PM_RDPS:3389 \
+-p "$PM_SSHS:22"   \
+-p "$PM_NXSR:4000" \
+-p "$PM_VNCS:5900" \
+-p "$PM_RDPS:3389" \
 -v "${DATAPATH}${PV_DATA}/root:/root"      \
 -v "${DATAPATH}${PV_DATA}/user:/home/user" \
 pikachuim/$OS_TYPE:$VERSION-$GUI_ENV
 
 # Set Images ---------------------------------------------------------------------
-if [ $GUI_ENV == 'server' ]; then
-  sudo docker exec $D_NAMES /bin/bash -c "systemctl daemon-reload"
+if [ "$GUI_ENV" = 'server' ]; then
+  sudo docker exec -- "$D_NAMES" /bin/bash -c "systemctl daemon-reload"
   echo -n "   "
   sudo docker exec $D_NAMES /bin/bash -c "systemctl enable run" >> /dev/null
   sudo docker exec $D_NAMES /bin/bash -c "systemctl start run" >> /dev/null

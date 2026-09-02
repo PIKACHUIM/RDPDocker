@@ -30,7 +30,7 @@ do
   echo -n "   Choose Operation Type Number(*): "
   read OP_TYPE
   # Quit -----------------------------------------------------------------------------
-  if [ $OP_TYPE == 'q' ]; then
+  if [ "$OP_TYPE" = 'q' ]; then
     clear
     exit 0
   # creator ---------------------------------------------------------------------------
@@ -46,21 +46,21 @@ do
     LIST_OCIS -a
     echo -n "   Enter Container Name or ID to Launch(*): "
     read DEL_NAME
-    docker start $DEL_NAME
+    docker start -- "$DEL_NAME"
   # Pause ----------------------------------------------------------------------------
   elif [ $OP_TYPE == 't' ]; then
     DEL_NAME=""
     LIST_OCIS " "
     echo -n "   Enter Container Name or ID to Stop  (*): "
     read DEL_NAME
-    docker stop $DEL_NAME
+    docker stop -- "$DEL_NAME"
   # Restart --------------------------------------------------------------------------
   elif [ $OP_TYPE == 'r' ]; then
     DEL_NAME=""
     LIST_OCIS " "
     echo -n "   Enter Container Name or ID to Stop  (*): "
     read DEL_NAME
-    docker restart $DEL_NAME
+    docker restart -- "$DEL_NAME"
   # Killall --------------------------------------------------------------------------
   elif [ $OP_TYPE == 'K' ]; then
     DEL_NAME=""
@@ -76,8 +76,8 @@ do
     LIST_OCIS -a
     echo -n "   Enter Container Name or ID to Delete(*): "
     read DEL_NAME
-    docker stop $DEL_NAME
-    docker rm   $DEL_NAME
+    docker stop -- "$DEL_NAME"
+    docker rm -- "$DEL_NAME"
   elif [ $OP_TYPE == 'b' ]; then
     source builder.sh
   elif [ $OP_TYPE == 'C' ]; then

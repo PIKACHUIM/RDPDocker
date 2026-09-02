@@ -14,6 +14,10 @@ var serveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// Set default static dir to embedded web/dist
+		if cfg.StaticDir == "" {
+			cfg.StaticDir = "/opt/deskcli/web/dist"
+		}
 		return api.Start(cfg)
 	},
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/pikachuim/deskcli/internal/config"
 	"github.com/pikachuim/deskcli/internal/engine"
 	"github.com/pikachuim/deskcli/internal/forward"
+	"github.com/pikachuim/deskcli/internal/store"
 )
 
 func ok(c *gin.Context, data interface{}) {
@@ -18,6 +20,41 @@ func ok(c *gin.Context, data interface{}) {
 
 func fail(c *gin.Context, code int, msg string) {
 	c.JSON(code, gin.H{"success": false, "data": nil, "message": msg})
+}
+
+var (
+	containerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+	imagePattern         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./:@-]{0,254}$`)
+	packagePattern       = regexp.MustCompile(`^[a-z0-9][a-z0-9+._-]{0,127}$`)
+)
+
+func containerName(c *gin.Context) (string, bool) {
+	name := c.Param("name")
+	if !containerNamePattern.MatchString(name) {
+		fail(c, http.StatusBadRequest, "invalid container name")
+		return "", false
+	}
+	return name, true
+}
+
+func parsePortMappings(values []string) ([]config.PortMap, error) {
+	mappings := make([]config.PortMap, 0, len(values))
+	for _, value := range values {
+		parts := strings.Split(value, ":")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid port mapping %q", value)
+		}
+		ext, err := strconv.Atoi(parts[0])
+		if err != nil || ext < 1 || ext > 65535 {
+			return nil, fmt.Errorf("invalid external port in %q", value)
+		}
+		internal, err := strconv.Atoi(parts[1])
+		if err != nil || internal < 1 || internal > 65535 {
+			return nil, fmt.Errorf("invalid internal port in %q", value)
+		}
+		mappings = append(mappings, config.PortMap{Ext: ext, Int: internal})
+	}
+	return mappings, nil
 }
 
 func loadEngine(c *gin.Context) (engine.Engine, *config.Config, bool) {
@@ -44,7 +81,30 @@ func ListContainers(c *gin.Context) {
 		fail(c, 500, err.Error())
 		return
 	}
-	ok(c, list)
+	uid, role := currentUser(c)
+	if role == "admin" {
+		ok(c, list)
+		return
+	}
+	// Non-admin users only see containers they own.
+	db := store.Get()
+	owned := map[string]bool{}
+	if db != nil {
+		if recs, err := db.ListContainers(); err == nil {
+			for _, r := range recs {
+				if r.UserID == uid {
+					owned[r.Name] = true
+				}
+			}
+		}
+	}
+	filtered := make([]engine.ContainerInfo, 0, len(list))
+	for _, ci := range list {
+		if owned[ci.Name] {
+			filtered = append(filtered, ci)
+		}
+	}
+	ok(c, filtered)
 }
 
 type createReq struct {
@@ -57,46 +117,73 @@ type createReq struct {
 func CreateContainer(c *gin.Context) {
 	var req createReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, 400, err.Error())
+		fail(c, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	eng, cfg, ok2 := loadEngine(c)
-	if !ok2 {
+	if !imagePattern.MatchString(req.Image) {
+		fail(c, http.StatusBadRequest, "invalid image name")
 		return
 	}
 	name := req.Name
 	if name == "" {
 		name = strings.ReplaceAll(strings.Split(req.Image, ":")[0], "/", "-")
 	}
-	if err := eng.Run(req.Image, name, req.Ports, nil, nil); err != nil {
-		fail(c, 500, err.Error())
+	if !containerNamePattern.MatchString(name) {
+		fail(c, http.StatusBadRequest, "invalid container name")
+		return
+	}
+	portMaps, err := parsePortMappings(req.Ports)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
 	for _, sw := range req.Softwares {
-		_ = eng.Exec(name, []string{"apt-get", "install", "-y", sw}, true)
-	}
-	var portMaps []config.PortMap
-	for _, p := range req.Ports {
-		parts := strings.SplitN(p, ":", 2)
-		if len(parts) == 2 {
-			ext, _ := strconv.Atoi(parts[0])
-			in, _ := strconv.Atoi(parts[1])
-			portMaps = append(portMaps, config.PortMap{Ext: ext, Int: in})
+		if !packagePattern.MatchString(sw) {
+			fail(c, http.StatusBadRequest, fmt.Sprintf("invalid package name %q", sw))
+			return
 		}
 	}
-	_ = config.SaveContainer(&config.ContainerConfig{Name: name, Image: req.Image, Engine: cfg.Engine, Ports: portMaps})
+	eng, cfg, ok2 := loadEngine(c)
+	if !ok2 {
+		return
+	}
+	if err := eng.Run(req.Image, name, req.Ports, nil, nil); err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	for _, sw := range req.Softwares {
+		if err := eng.Exec(name, []string{"apt-get", "install", "-y", sw}, true); err != nil {
+			fail(c, http.StatusInternalServerError, fmt.Sprintf("container created but package installation failed: %v", err))
+			return
+		}
+	}
+	if err := config.SaveContainer(&config.ContainerConfig{Name: name, Image: req.Image, Engine: cfg.Engine, Ports: portMaps}); err != nil {
+		fail(c, http.StatusInternalServerError, fmt.Sprintf("container created but configuration could not be saved: %v", err))
+		return
+	}
+	uid, _ := currentUser(c)
+	saveContainerRecord(name, req.Image, cfg.Engine, portMaps, uid, 0)
 	if ip, err := eng.GetIP(name); err == nil && ip != "" {
-		_ = forward.ApplyContainerRules(ip, portMaps)
+		if err := forward.ApplyContainerRules(ip, portMaps); err != nil {
+			fail(c, http.StatusInternalServerError, fmt.Sprintf("container created but port forwarding failed: %v", err))
+			return
+		}
 	}
 	ok(c, gin.H{"name": name})
 }
 
 func GetContainer(c *gin.Context) {
+	name, valid := containerName(c)
+	if !valid {
+		return
+	}
+	if !authorizeContainer(c, name) {
+		return
+	}
 	eng, _, ok2 := loadEngine(c)
 	if !ok2 {
 		return
 	}
-	name := c.Param("name")
 	info, err := eng.Info(name)
 	if err != nil {
 		fail(c, 404, fmt.Sprintf("container %s not found: %v", name, err))
@@ -106,25 +193,41 @@ func GetContainer(c *gin.Context) {
 }
 
 func RemoveContainer(c *gin.Context) {
+	name, valid := containerName(c)
+	if !valid {
+		return
+	}
+	if !authorizeContainer(c, name) {
+		return
+	}
 	eng, _, ok2 := loadEngine(c)
 	if !ok2 {
 		return
 	}
-	name := c.Param("name")
 	if err := eng.Remove(name); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 	_ = config.DeleteContainer(name)
+	if db := store.Get(); db != nil {
+		_ = db.Delete(name)
+	}
 	ok(c, nil)
 }
 
 func StartContainer(c *gin.Context) {
+	name, valid := containerName(c)
+	if !valid {
+		return
+	}
+	if !authorizeContainer(c, name) {
+		return
+	}
 	eng, _, ok2 := loadEngine(c)
 	if !ok2 {
 		return
 	}
-	if err := eng.Start(c.Param("name")); err != nil {
+	if err := eng.Start(name); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
@@ -132,11 +235,18 @@ func StartContainer(c *gin.Context) {
 }
 
 func StopContainer(c *gin.Context) {
+	name, valid := containerName(c)
+	if !valid {
+		return
+	}
+	if !authorizeContainer(c, name) {
+		return
+	}
 	eng, _, ok2 := loadEngine(c)
 	if !ok2 {
 		return
 	}
-	if err := eng.Stop(c.Param("name")); err != nil {
+	if err := eng.Stop(name); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
@@ -144,11 +254,18 @@ func StopContainer(c *gin.Context) {
 }
 
 func RestartContainer(c *gin.Context) {
+	name, valid := containerName(c)
+	if !valid {
+		return
+	}
+	if !authorizeContainer(c, name) {
+		return
+	}
 	eng, _, ok2 := loadEngine(c)
 	if !ok2 {
 		return
 	}
-	if err := eng.Restart(c.Param("name")); err != nil {
+	if err := eng.Restart(name); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
@@ -161,35 +278,51 @@ type execReq struct {
 }
 
 func ExecContainer(c *gin.Context) {
+	name, valid := containerName(c)
+	if !valid {
+		return
+	}
+	if !authorizeContainer(c, name) {
+		return
+	}
 	var req execReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, 400, err.Error())
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Cmd) == 0 || strings.TrimSpace(req.Cmd[0]) == "" {
+		fail(c, http.StatusBadRequest, "cmd must contain an executable")
 		return
 	}
 	eng, _, ok2 := loadEngine(c)
 	if !ok2 {
 		return
 	}
-	if err := eng.Exec(c.Param("name"), req.Cmd, req.Detach); err != nil {
+	if err := eng.Exec(name, req.Cmd, req.Detach); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}
 	ok(c, nil)
 }
 
-type passwdReq struct{ Password string `json:"password"` }
+type passwdReq struct {
+	Password string `json:"password"`
+}
 
 func SetPassword(c *gin.Context) {
+	name, valid := containerName(c)
+	if !valid {
+		return
+	}
+	if !authorizeContainer(c, name) {
+		return
+	}
 	var req passwdReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, 400, err.Error())
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Password) < 12 || len(req.Password) > 256 {
+		fail(c, http.StatusBadRequest, "password must be 12-256 characters")
 		return
 	}
 	eng, _, ok2 := loadEngine(c)
 	if !ok2 {
 		return
 	}
-	if err := eng.SetPassword(c.Param("name"), req.Password); err != nil {
+	if err := eng.SetPassword(name, req.Password); err != nil {
 		fail(c, 500, err.Error())
 		return
 	}

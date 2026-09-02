@@ -17,11 +17,15 @@ const (
 )
 
 type Config struct {
-	Token     string `yaml:"token"`
-	Engine    string `yaml:"engine"`
-	Port      int    `yaml:"port"`
-	DataDir   string `yaml:"data_dir"`
-	PortRange string `yaml:"port_range"`
+	Token      string `yaml:"token"`
+	JWTSecret  string `yaml:"jwt_secret"`
+	Engine     string `yaml:"engine"`
+	ListenAddr string `yaml:"listen_addr"`
+	Port       int    `yaml:"port"`
+	DataDir    string `yaml:"data_dir"`
+	PortRange  string `yaml:"port_range"`
+	AllowExec  bool   `yaml:"allow_exec"`
+	StaticDir  string `yaml:"static_dir"`
 }
 
 type PortMap struct {
@@ -39,7 +43,10 @@ type ContainerConfig struct {
 func Load() (*Config, error) {
 	data, err := os.ReadFile(MainConfig)
 	if err != nil {
-		return &Config{Engine: "docker", Port: 8080, DataDir: DataDir, PortRange: "50000-60000"}, nil
+		return &Config{
+			Engine: "docker", ListenAddr: "127.0.0.1",
+			Port: 8080, DataDir: DataDir, PortRange: "50000-60000",
+		}, nil
 	}
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
@@ -47,6 +54,9 @@ func Load() (*Config, error) {
 	}
 	if c.Port == 0 {
 		c.Port = 8080
+	}
+	if c.ListenAddr == "" {
+		c.ListenAddr = "127.0.0.1"
 	}
 	if c.Engine == "" {
 		c.Engine = "docker"
@@ -61,14 +71,14 @@ func Load() (*Config, error) {
 }
 
 func Save(c *Config) error {
-	if err := os.MkdirAll(ConfigDir, 0755); err != nil {
+	if err := os.MkdirAll(ConfigDir, 0700); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(MainConfig, data, 0644)
+	return os.WriteFile(MainConfig, data, 0600)
 }
 
 func containerConfigPath(name string) string {
@@ -86,14 +96,14 @@ func LoadContainer(name string) (*ContainerConfig, error) {
 
 func SaveContainer(c *ContainerConfig) error {
 	dir := filepath.Join(ConfigDir, "containers")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(containerConfigPath(c.Name), data, 0644)
+	return os.WriteFile(containerConfigPath(c.Name), data, 0600)
 }
 
 func ListContainerConfigs() ([]*ContainerConfig, error) {
@@ -129,8 +139,14 @@ func AllocatePorts(portRange string, usedPorts map[int]bool) ([4]int, error) {
 	if len(parts) != 2 {
 		return [4]int{}, fmt.Errorf("invalid port_range: %s", portRange)
 	}
-	start, _ := strconv.Atoi(strings.TrimSpace(parts[0]))
-	end, _ := strconv.Atoi(strings.TrimSpace(parts[1]))
+	start, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || start < 1 || start > 65535 {
+		return [4]int{}, fmt.Errorf("invalid port_range start: %s", parts[0])
+	}
+	end, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || end < start || end > 65535 {
+		return [4]int{}, fmt.Errorf("invalid port_range end: %s", parts[1])
+	}
 	var result [4]int
 	taken := make(map[int]bool)
 	for k, v := range usedPorts {

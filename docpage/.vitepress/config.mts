@@ -17,6 +17,7 @@ export default defineConfig({
           text: '开始',
           items: [
             { text: '项目介绍', link: '/guide/introduction' },
+            { text: '快速开始', link: '/guide/quick-start' },
             { text: '环境要求', link: '/guide/requirements' },
             { text: '安装方法', link: '/guide/installation' }
           ]
@@ -24,8 +25,15 @@ export default defineConfig({
         {
           text: '使用',
           items: [
+            { text: 'Web 管理面板', link: '/guide/management' },
             { text: '镜像使用', link: '/guide/images' },
-            { text: 'deskcli CLI', link: '/guide/deskcli' }
+            { text: 'deskcli CLI', link: '/guide/easydesk' }
+          ]
+        },
+        {
+          text: '帮助',
+          items: [
+            { text: '常见问题', link: '/guide/faq' }
           ]
         }
       ],

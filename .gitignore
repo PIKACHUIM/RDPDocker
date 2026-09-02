@@ -1,3 +1,7 @@
 Backups/
 Backups/*
 docpage/node_modules
+webpage/node_modules/
+deskcli/web/dist/
+docpage/.vitepress/dist/
+.workbuddy/memory

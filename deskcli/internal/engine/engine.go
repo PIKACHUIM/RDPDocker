@@ -3,14 +3,31 @@ package engine
 import "fmt"
 
 type ContainerInfo struct {
-	Name   string
-	Status string
-	Image  string
-	Ports  []string
-	ID     string
+	Name   string   `json:"name"`
+	Status string   `json:"status"`
+	Image  string   `json:"image"`
+	Ports  []string `json:"ports"`
+	ID     string   `json:"id"`
+}
+
+// ImageInfo describes a locally available image.
+type ImageInfo struct {
+	ID      string   `json:"id"`
+	Tags    []string `json:"tags"`
+	Size    string   `json:"size"`
+	Created string   `json:"created"`
+}
+
+// EngineStats holds aggregate statistics from an engine.
+type EngineStats struct {
+	ContainersRunning int    `json:"containers_running"`
+	ContainersTotal   int    `json:"containers_total"`
+	ImagesTotal       int    `json:"images_total"`
+	EngineVersion     string `json:"engine_version"`
 }
 
 type Engine interface {
+	// ── existing methods ──────────────────────────────────────────────────
 	List() ([]ContainerInfo, error)
 	Start(name string) error
 	Stop(name string) error
@@ -22,6 +39,12 @@ type Engine interface {
 	SetPassword(name, password string) error
 	Info(name string) (*ContainerInfo, error)
 	GetIP(name string) (string, error)
+
+	// ── new methods ───────────────────────────────────────────────────────
+	ListImages() ([]ImageInfo, error)
+	RemoveImage(id string) error
+	GetStats() (*EngineStats, error)
+	Version() string
 }
 
 func New(engineType string) (Engine, error) {

@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-surface-border;
+  }
+  body {
+    @apply bg-surface text-text-primary font-sans antialiased;
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-surface-raised/60 backdrop-blur-md border border-surface-border rounded-lg;
+  }
+  
+  .glow-border {
+    @apply border border-accent-indigo/30 hover:border-accent-indigo/60 transition-colors;
+  }
+  
+  .status-dot {
+    @apply w-2 h-2 rounded-full;
+  }
+  
+  .status-dot.running {
+    @apply bg-emerald-500 animate-pulse;
+  }
+  
+  .status-dot.stopped {
+    @apply bg-red-500;
+  }
+  
+  .status-dot.starting {
+    @apply bg-yellow-500 animate-pulse-slow;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-surface-raised;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-surface-border rounded-full hover:bg-text-muted;
+}
